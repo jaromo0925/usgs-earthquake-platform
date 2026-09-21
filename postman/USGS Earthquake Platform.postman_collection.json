@@ -1,0 +1,139 @@
+{
+  "info": {
+    "_postman_id": "b71067ac-a6a0-4ce5-8af6-cde5dfb9c62f",
+    "name": "USGS Earthquake Platform",
+    "description": "Consultas de la prueba técnica de procesamiento de eventos sísmicos.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8000", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/health/ready"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Service is ready', () => pm.expect(pm.response.json().status).to.eql('ready'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Earthquakes",
+      "item": [
+        {
+          "name": "List latest earthquakes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/earthquakes?page=1&page_size=20&sort_by=event_time&sort_order=desc",
+              "host": ["{{base_url}}"],
+              "path": ["earthquakes"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "page_size", "value": "20"},
+                {"key": "sort_by", "value": "event_time"},
+                {"key": "sort_order", "value": "desc"}
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Paginated response', () => { const body = pm.response.json(); pm.expect(body).to.have.all.keys('items', 'page', 'page_size', 'total', 'pages'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter significant earthquakes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/earthquakes?min_magnitude=4&page_size=10&sort_by=magnitude&sort_order=desc",
+              "host": ["{{base_url}}"],
+              "path": ["earthquakes"],
+              "query": [
+                {"key": "min_magnitude", "value": "4"},
+                {"key": "page_size", "value": "10"},
+                {"key": "sort_by", "value": "magnitude"},
+                {"key": "sort_order", "value": "desc"}
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('All magnitudes are at least 4', () => pm.response.json().items.forEach(item => pm.expect(item.magnitude).to.be.at.least(4)));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Metrics",
+      "item": [
+        {
+          "name": "List hourly metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/metrics?page=1&page_size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {"exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"]}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "List Airflow reports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/reports?page=1&page_size=20"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {"exec": ["pm.test('HTTP 200', () => pm.response.to.have.status(200));"]}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
