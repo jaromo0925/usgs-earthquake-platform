@@ -1,81 +1,126 @@
 # Plataforma de eventos sísmicos USGS
 
-Solución de la prueba técnica de procesamiento de eventos en near real-time con Python,
-FastAPI, MongoDB, Airflow y Docker Compose.
+Solución de la prueba técnica de procesamiento de eventos en near real-time con Python, FastAPI, MongoDB, Airflow y Docker Compose.
 
 **Autor:** Javier Rodríguez Mosquera
 
-El sistema consulta el feed público de USGS cada tres minutos, valida y normaliza cada
-evento, evita duplicados, actualiza métricas horarias inmediatamente y genera un reporte
-consolidado cada hora. La solución incluye logs JSON, pruebas, colección Postman y un perfil
-opcional de observabilidad con Prometheus y Grafana.
+El sistema consulta el feed público de USGS cada tres minutos, valida y normaliza cada evento, evita registros duplicados, actualiza métricas horarias inmediatamente y genera un reporte consolidado cada hora.
+
+La solución incluye logs estructurados, validaciones con Pydantic, pruebas unitarias, colección Postman y un perfil opcional de observabilidad con Prometheus y Grafana.
 
 ## Inicio rápido
 
-Requisitos: Docker Engine 24+ y Docker Compose v2.
+### Requisitos
 
-El paquete final descargable ya incluye un `.env` local, por lo que puede iniciarse directamente:
+* Docker Engine 24 o superior.
+* Docker Compose v2.
+* Python 3.11 o superior para generar el archivo de configuración y ejecutar las pruebas.
 
-```bash
-docker compose up --build
-```
+### 1. Crear el archivo de configuración
 
-Si el proyecto fue clonado desde GitHub, `.env` no estará incluido por seguridad. Se puede
-generar automáticamente con contraseñas aleatorias mediante:
+Desde la raíz del proyecto, ejecutar:
 
 ```bash
 python scripts/generate_env.py
+```
+
+El script crea el archivo `.env` a partir de `.env.example` y genera contraseñas aleatorias para Airflow y Grafana.
+
+Las credenciales generadas pueden consultarse abriendo el archivo `.env`.
+
+### 2. Iniciar la plataforma
+
+```bash
 docker compose up --build
 ```
 
-Servicios disponibles:
+La primera consulta al servicio USGS ocurre al iniciar el worker. Las siguientes consultas se ejecutan según `INGESTION_INTERVAL_SECONDS`, cuyo valor predeterminado es 180 segundos.
 
-| Servicio | URL | Uso |
-|---|---|---|
-| FastAPI | <http://localhost:8000/docs> | Swagger y consultas REST |
-| Airflow | <http://localhost:8080> | DAG de reportes horarios |
-| MongoDB | `localhost:27017` | Persistencia local |
+### Configuración manual del entorno
 
-Las credenciales locales están definidas únicamente en `.env`, archivo excluido del repositorio
-por `.gitignore`. No se deben publicar contraseñas reales en GitHub.
+Si no se desea utilizar el generador automático, el archivo puede crearse manualmente.
 
-La primera consulta del worker ocurre al iniciar; después se repite según
-`INGESTION_INTERVAL_SECONDS` (180 segundos por defecto).
+**Linux o macOS:**
 
-### Observabilidad opcional
+```bash
+cp .env.example .env
+```
+
+**Windows PowerShell:**
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Después se deben reemplazar en `.env` los siguientes valores:
+
+```env
+AIRFLOW_PASSWORD=REPLACE_WITH_A_SECURE_PASSWORD
+GRAFANA_PASSWORD=REPLACE_WITH_A_DIFFERENT_SECURE_PASSWORD
+```
+
+El archivo `.env` está incluido en `.gitignore` y no debe publicarse en el repositorio.
+
+## Servicios disponibles
+
+| Servicio | URL                        | Uso                                          |
+| -------- | -------------------------- | -------------------------------------------- |
+| FastAPI  | http://localhost:8000/docs | Documentación Swagger y consultas REST       |
+| Airflow  | http://localhost:8080      | Administración del DAG de reportes horarios  |
+| MongoDB  | `localhost:27017`          | Persistencia de eventos, métricas y reportes |
+
+Las credenciales de Airflow están definidas en las variables `AIRFLOW_USERNAME` y `AIRFLOW_PASSWORD` del archivo `.env`.
+
+## Observabilidad opcional
+
+Para iniciar también Prometheus y Grafana:
 
 ```bash
 docker compose --profile observability up --build
 ```
 
-- Prometheus: <http://localhost:9090>
-- Grafana: <http://localhost:3000>
-- Métricas API: <http://localhost:8000/observability/metrics>
+Servicios adicionales:
+
+* Prometheus: http://localhost:9090
+* Grafana: http://localhost:3000
+* Métricas de FastAPI: http://localhost:8000/observability/metrics
+
+Las credenciales de Grafana están definidas en las variables `GRAFANA_USERNAME` y `GRAFANA_PASSWORD` del archivo `.env`.
 
 ## Arquitectura
 
 ```mermaid
 flowchart TD
-    USGS["USGS GeoJSON API"] --> ING["Worker de ingesta\ncada 3 minutos"]
-    ING --> EQ["MongoDB\nearthquakes"]
-    EQ --> PROC["Procesamiento idempotente\npor ventana horaria"]
-    PROC --> MET["MongoDB\nmetrics"]
+    USGS["USGS GeoJSON API"] --> ING["Worker de ingesta<br/>cada 3 minutos"]
+    ING --> EQ["MongoDB<br/>earthquakes"]
+    EQ --> PROC["Procesamiento idempotente<br/>por ventana horaria"]
+    PROC --> MET["MongoDB<br/>metrics"]
     EQ --> API["FastAPI"]
     MET --> API
-    AF["Airflow\ncada hora"] --> EQ
-    AF --> REP["MongoDB\nhourly_reports"]
+    AF["Airflow<br/>cada hora"] --> EQ
+    AF --> REP["MongoDB<br/>hourly_reports"]
     REP --> API
 ```
 
-La ingesta y la API son procesos independientes. Ambos comparten contratos de dominio y
-repositorios, pero pueden escalarse y desplegarse por separado. Airflow lee directamente la
-capa operacional para crear un reporte reproducible e idempotente.
+La ingesta y la API son procesos independientes. Ambos comparten contratos de dominio y repositorios, pero pueden escalarse y desplegarse por separado.
+
+Airflow lee la capa operacional para crear reportes reproducibles e idempotentes. FastAPI consulta las colecciones de eventos, métricas y reportes sin acoplarse al proceso de ingesta.
+
+## Flujo de procesamiento
+
+1. El worker consulta el feed público de USGS cada tres minutos.
+2. Cada elemento se transforma y valida mediante un modelo Pydantic.
+3. El evento se almacena en MongoDB utilizando `event_id` como identificador único.
+4. Los eventos duplicados son descartados mediante una operación atómica.
+5. Se recalculan inmediatamente las métricas de la ventana horaria correspondiente.
+6. Airflow genera y persiste un reporte consolidado cada hora.
+7. FastAPI expone los eventos, métricas y reportes mediante endpoints REST.
 
 ## Endpoints
 
 ### `GET /earthquakes`
 
-Soporta paginación, filtros y ordenamiento:
+Consulta los eventos sísmicos almacenados.
 
 ```bash
 curl "http://localhost:8000/earthquakes?page=1&page_size=10&min_magnitude=4&sort_by=magnitude&sort_order=desc"
@@ -83,16 +128,19 @@ curl "http://localhost:8000/earthquakes?page=1&page_size=10&min_magnitude=4&sort
 
 Parámetros disponibles:
 
-- `page`, `page_size`
-- `min_magnitude`, `max_magnitude`
-- `start_time`, `end_time` en ISO 8601
-- `location`, búsqueda parcial sin distinguir mayúsculas
-- `sort_by`: `event_time` o `magnitude`
-- `sort_order`: `asc` o `desc`
+* `page`: número de página.
+* `page_size`: cantidad de resultados por página.
+* `min_magnitude`: magnitud mínima.
+* `max_magnitude`: magnitud máxima.
+* `start_time`: fecha inicial en formato ISO 8601.
+* `end_time`: fecha final en formato ISO 8601.
+* `location`: búsqueda parcial por ubicación.
+* `sort_by`: `event_time` o `magnitude`.
+* `sort_order`: `asc` o `desc`.
 
 ### `GET /metrics`
 
-Devuelve las métricas near real-time agrupadas por hora:
+Consulta las métricas near real-time agrupadas por hora.
 
 ```bash
 curl "http://localhost:8000/metrics?page=1&page_size=20"
@@ -100,86 +148,140 @@ curl "http://localhost:8000/metrics?page=1&page_size=20"
 
 ### `GET /reports`
 
-Devuelve los reportes consolidados producidos por Airflow:
+Consulta los reportes consolidados generados por Airflow.
 
 ```bash
 curl "http://localhost:8000/reports?page=1&page_size=20"
 ```
 
-También se exponen `/health/live` y `/health/ready` para operación en contenedores.
+### Endpoints de salud
+
+```text
+GET /health/live
+GET /health/ready
+```
+
+Estos endpoints permiten verificar la disponibilidad de la API y la conexión con MongoDB.
 
 ## Decisiones de diseño
 
 ### Deduplicación
 
-`earthquakes.event_id` tiene un índice único. La escritura utiliza `upsert` con
-`$setOnInsert`, por lo cual la verificación y la inserción ocurren de forma atómica. No se
-usa el patrón inseguro de consultar primero e insertar después.
+`earthquakes.event_id` tiene un índice único. La escritura utiliza `upsert` con `$setOnInsert`, por lo cual la verificación y la inserción se realizan de forma atómica.
+
+Esto evita la condición de carrera que se produciría al consultar primero la existencia del evento y posteriormente intentar insertarlo.
 
 ### Procesamiento confiable
 
-Cada evento nuevo se guarda con `metrics_processed=false`. Inmediatamente se recalcula la
-ventana horaria a la que pertenece y luego se marca el evento como procesado. Si el proceso
-falla entre estos pasos, la siguiente iteración recupera los pendientes.
+Cada evento nuevo se guarda inicialmente con:
 
-La métrica se recalcula a partir de los eventos persistidos y se sobrescribe mediante un
-`upsert`; no se incrementa a ciegas. Así, un reintento no duplica conteos. El intervalo se
-modela como `[window_start, window_end)`, evitando contar dos veces los eventos en el límite
-de la hora.
+```text
+metrics_processed=false
+```
+
+Después de persistirlo, se recalculan las métricas de la ventana horaria a la que pertenece y el evento se marca como procesado.
+
+Si ocurre una falla, la siguiente iteración identifica y recupera los eventos pendientes.
+
+La métrica se recalcula a partir de los eventos almacenados y se sobrescribe mediante un `upsert`. Esta estrategia permite que los reintentos sean idempotentes y no incrementen incorrectamente los conteos.
+
+Las ventanas horarias utilizan el intervalo:
+
+```text
+[window_start, window_end)
+```
+
+De esta forma, los eventos ubicados exactamente en el límite de una hora no se contabilizan dos veces.
 
 ### Rangos de magnitud
 
-| Clave | Rango |
-|---|---|
-| `lt_2` | magnitud menor que 2 |
-| `2_to_3_9` | desde 2 y menor que 4 |
-| `4_to_5_9` | desde 4 y menor que 6 |
-| `gte_6` | magnitud mayor o igual que 6 |
+| Clave      | Rango                        |
+| ---------- | ---------------------------- |
+| `lt_2`     | Magnitud menor que 2         |
+| `2_to_3_9` | Desde 2 y menor que 4        |
+| `4_to_5_9` | Desde 4 y menor que 6        |
+| `gte_6`    | Magnitud mayor o igual que 6 |
 
 ### Índices
 
-| Colección | Índice | Objetivo |
-|---|---|---|
-| `earthquakes` | `event_id` único | Deduplicación atómica |
-| `earthquakes` | `event_time DESC, magnitude DESC` | Filtros, ordenamiento y agregaciones |
-| `earthquakes` | parcial `metrics_processed=false, event_time` | Recuperación rápida de pendientes |
-| `metrics` | `window_start` único | Un documento por ventana |
-| `hourly_reports` | `report_date` único | Ejecución idempotente del DAG |
+| Colección        | Índice                                        | Objetivo                                  |
+| ---------------- | --------------------------------------------- | ----------------------------------------- |
+| `earthquakes`    | `event_id` único                              | Deduplicación atómica                     |
+| `earthquakes`    | `event_time DESC, magnitude DESC`             | Filtros, ordenamiento y agregaciones      |
+| `earthquakes`    | Parcial `metrics_processed=false, event_time` | Recuperación rápida de eventos pendientes |
+| `metrics`        | `window_start` único                          | Un documento por ventana horaria          |
+| `hourly_reports` | `report_date` único                           | Ejecución idempotente del DAG             |
 
 ### Manejo de errores
 
-- Timeout y reintentos con backoff exponencial ante fallas de USGS.
-- Validación de tipos, coordenadas, profundidad, magnitud y fecha con Pydantic.
-- Un elemento inválido se descarta sin detener el lote completo.
-- Logs estructurados JSON con contexto de ejecución y `event_id`.
-- Health checks y reinicio automático de contenedores.
-- Pool de conexiones MongoDB reutilizable; no se crea una conexión por solicitud.
+* Timeout y reintentos con backoff exponencial ante fallas de USGS.
+* Validación de tipos, coordenadas, profundidad, magnitud y fecha con Pydantic.
+* Descarte controlado de elementos inválidos sin detener el lote completo.
+* Logs estructurados en JSON con contexto de ejecución y `event_id`.
+* Health checks para los servicios.
+* Reinicio automático de los contenedores.
+* Pool reutilizable de conexiones con MongoDB.
+* Recuperación de eventos pendientes de procesamiento.
 
 ## Airflow
 
-El DAG `hourly_earthquake_report` se ejecuta con `@hourly`, toma exactamente el intervalo de
-datos asignado por Airflow y persiste:
+El DAG `hourly_earthquake_report` se ejecuta con la expresión:
 
-- total de eventos;
-- magnitud promedio y máxima;
-- tres ubicaciones con mayor número de eventos;
-- distribución por rango de magnitud.
+```text
+@hourly
+```
 
-`report_date` es único y la escritura es un `upsert`, por lo que reejecutar una hora corrige
-o reconstruye el reporte sin duplicarlo. Para una demostración inmediata, en Airflow se puede
-activar manualmente el DAG después de que la ingesta haya guardado eventos.
+El proceso toma el intervalo de datos asignado por Airflow y persiste:
+
+* Total de eventos.
+* Magnitud promedio.
+* Magnitud máxima.
+* Tres ubicaciones con mayor número de eventos.
+* Distribución por rangos de magnitud.
+
+`report_date` tiene un índice único y la escritura utiliza un `upsert`. Por lo tanto, reejecutar una hora permite corregir o reconstruir el reporte sin generar duplicados.
+
+Para una demostración inmediata, el DAG puede activarse manualmente desde Airflow después de que el worker haya almacenado eventos.
 
 ## Pruebas y calidad
 
+### Crear el entorno virtual
+
 ```bash
 python -m venv .venv
+```
+
+**Linux o macOS:**
+
+```bash
 source .venv/bin/activate
+```
+
+**Windows PowerShell:**
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### Instalar las dependencias
+
+```bash
 pip install -r requirements-dev.txt
+```
+
+### Ejecutar las pruebas
+
+```bash
 pytest
+```
+
+### Ejecutar el análisis estático
+
+```bash
 ruff check .
 ```
 
-Validaciones rápidas del entorno Docker:
+### Validaciones del entorno Docker
 
 ```bash
 docker compose config --quiet
@@ -189,38 +291,94 @@ curl --fail http://localhost:8000/health/ready
 
 ## Colección Postman
 
-Importar `postman/USGS Earthquake Platform.postman_collection.json`. La variable
-`base_url` apunta por defecto a `http://localhost:8000`.
+La colección se encuentra en:
 
-## Publicación en GitHub
+```text
+postman/USGS Earthquake Platform.postman_collection.json
+```
 
-La guía detallada para crear el repositorio, verificar que `.env` no se publique y compartir
-el enlace se encuentra en [SUBIR_A_GITHUB.md](SUBIR_A_GITHUB.md).
+Para utilizarla:
 
-## Estructura
+1. Abrir Postman.
+2. Seleccionar **Import**.
+3. Seleccionar el archivo de la colección.
+4. Confirmar que la variable `base_url` tenga el valor:
+
+```text
+http://localhost:8000
+```
+
+## Estructura del proyecto
 
 ```text
 app/
-  config.py             configuración por variables de entorno
-  database.py           conexión, health check e índices
-  ingestion_main.py     proceso de ingesta desacoplado
-  logging_config.py     logs JSON
+  __init__.py
+  config.py             Configuración mediante variables de entorno
+  database.py           Conexión, health checks e índices de MongoDB
+  ingestion_main.py     Proceso de ingesta desacoplado
+  logging_config.py     Configuración de logs estructurados
   main.py               API FastAPI
-  models.py             contratos Pydantic
-  observability.py      métricas Prometheus
-  repositories.py       acceso a MongoDB
-  services.py           casos de uso de ingesta y procesamiento
-  usgs_client.py        adaptador del proveedor USGS
-airflow/dags/            reporte horario
-docs/                    decisiones y evolución analítica
-monitoring/              Prometheus y dashboard Grafana
-postman/                 colección de consultas
-tests/                   pruebas unitarias
+  models.py             Contratos y validaciones Pydantic
+  observability.py      Métricas para Prometheus
+  repositories.py       Acceso a las colecciones de MongoDB
+  services.py           Casos de uso de ingesta y procesamiento
+  usgs_client.py        Cliente del servicio USGS
+
+airflow/
+  dags/
+    hourly_earthquake_report.py
+
+docs/
+  advanced-analytics.md
+
+monitoring/
+  prometheus.yml
+  grafana/
+    dashboards/
+    provisioning/
+
+postman/
+  USGS Earthquake Platform.postman_collection.json
+
+scripts/
+  generate_env.py
+
+tests/
+  test_models.py
+  test_services.py
+  test_usgs_client.py
+
+.env.example
+.gitignore
+Dockerfile
+Dockerfile.airflow
+docker-compose.yml
+requirements.txt
+requirements-dev.txt
 ```
 
-## Alcance y evolución
+## Evolución hacia analítica avanzada
 
-Esta entrega prioriza un núcleo sencillo y defendible. La ejecución local usa un único worker
-de ingesta y Airflow en modo `standalone`, adecuados para la prueba. La evolución a producción
-se documenta en [docs/advanced-analytics.md](docs/advanced-analytics.md), incluyendo réplica de
-MongoDB, bus de eventos, Parquet, separación operacional/analítica y escalamiento de Airflow.
+La propuesta de evolución se documenta en:
+
+```text
+docs/advanced-analytics.md
+```
+
+La arquitectura futura contempla:
+
+* MongoDB como capa operacional.
+* Change Streams o Kafka para integración orientada a eventos.
+* Almacenamiento histórico en archivos Parquet.
+* Separación entre las capas raw, curated y serving.
+* Dashboards históricos y en tiempo real.
+* Generación de datasets versionados para machine learning.
+* MLflow para trazabilidad de experimentos y modelos.
+* Estrategias de gobierno, calidad y linaje de datos.
+
+## Alcance
+
+Esta entrega prioriza un núcleo sencillo, modular y defendible.
+
+La ejecución local utiliza un único worker de ingesta y Airflow en modo `standalone`, configuraciones adecuadas para la prueba técnica. Para un entorno productivo se recomienda utilizar un replica set de MongoDB, Airflow con PostgreSQL, workers separados, gestión centralizada de secretos, TLS, autenticación, autorización, CI/CD y alertas operativas.
+
